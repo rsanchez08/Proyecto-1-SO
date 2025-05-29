@@ -1,124 +1,149 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 #include "mypthreads.h"
 
-#define CANVAS_WIDTH 80
-#define CANVAS_HEIGHT 20
-char canvas[CANVAS_HEIGHT][CANVAS_WIDTH + 1];
+#define CANVAS_WIDTH 50
+#define CANVAS_HEIGHT 50
 
-char *estrella[] = {
-    "  *  ",
-    " *** ",
-    "*****",
-    " *** ",
-    "  *  "
-};
-
-#define ESTRELLA_HEIGHT 5
-#define ESTRELLA_WIDTH 5
-
-typedef struct {
-    int x, y;
-    int dx, dy;
-    int tiempo_inicio;
-    int tiempo_final;
-    int tiempo_actual;
-} Objeto;
-
-Objeto objeto = {0, 5, 1, 0, 2, 8, 0};
-
+char canvas[CANVAS_HEIGHT][CANVAS_WIDTH];
 my_mutex_t canvas_mutex;
 
-void dibujar_objeto(int x, int y) {
-    for (int i = 0; i < ESTRELLA_HEIGHT; i++) {
-        for (int j = 0; j < ESTRELLA_WIDTH; j++) {
-            char c = estrella[i][j];
-            if (c != ' ') {
-                int cx = x + j;
-                int cy = y + i;
-                if (cx >= 0 && cx < CANVAS_WIDTH && cy >= 0 && cy < CANVAS_HEIGHT) {
-                    canvas[cy][cx] = c;
-                }
-            }
-        }
-    }
-}
-
-void borrar_objeto(int x, int y) {
-    for (int i = 0; i < ESTRELLA_HEIGHT; i++) {
-        for (int j = 0; j < ESTRELLA_WIDTH; j++) {
-            int cx = x + j;
-            int cy = y + i;
-            if (cx >= 0 && cx < CANVAS_WIDTH && cy >= 0 && cy < CANVAS_HEIGHT) {
-                canvas[cy][cx] = '.';
-            }
-        }
-    }
-}
-
-void mostrar_canvas() {
-    system("clear");
-    for (int i = 0; i < CANVAS_HEIGHT; i++) {
-        printf("%s\n", canvas[i]);
-    }
-}
-
-void *animar_estrella(void *arg) {
-    printf("Hilo iniciado\n");
-    fflush(stdout);
-
-    my_sleep(objeto.tiempo_inicio);
-
-    printf("Comenzando animación...\n");
-    fflush(stdout);
-
-    for (int t = objeto.tiempo_inicio; t <= objeto.tiempo_final; t++) {
-        my_mutex_lock(&canvas_mutex);
-        borrar_objeto(objeto.x, objeto.y);
-
-        objeto.x += objeto.dx;
-        objeto.y += objeto.dy;
-
-        dibujar_objeto(objeto.x, objeto.y);
-        mostrar_canvas();
-
-        my_mutex_unlock(&canvas_mutex);
-
-        my_sleep(1);
-        objeto.tiempo_actual++;
-
-        if (objeto.tiempo_actual > objeto.tiempo_final - objeto.tiempo_inicio) {
-            printf("\n\nBOOM! El objeto explotó por llegar tarde.\n");
-            break;
-        }
-    }
-
-    my_thread_end();
-    return NULL;
-}
+typedef struct {
+    int x, y;               // posición actual
+    int dx, dy;             // dirección
+    int tiempo_inicio;      // segundos antes de comenzar
+    int tiempo_final;       // segundos para finalizar
+    int tiempo_actual;      // contador interno
+    int id;                 // número único del objeto
+} Objeto;
 
 void inicializar_canvas() {
     for (int i = 0; i < CANVAS_HEIGHT; i++) {
         for (int j = 0; j < CANVAS_WIDTH; j++) {
             canvas[i][j] = '.';
         }
-        canvas[i][CANVAS_WIDTH] = '\0';
     }
     printf("Canvas inicializado\n");
+}
+
+void imprimir_canvas() {
+    system("clear");
+    for (int i = 0; i < CANVAS_HEIGHT; i++) {
+        for (int j = 0; j < CANVAS_WIDTH; j++) {
+            putchar(canvas[i][j]);
+        }
+        putchar('\n');
+    }
+
+    // Mostrar el estado del scheduler debajo del canvas
+    printf("\n\n%s\n", mensaje_scheduler);
+}
+
+
+void dibujar_estrella(Objeto *obj) {
+    char c = '0' + obj->id;
+    my_mutex_lock(&canvas_mutex);
+    int x = obj->x, y = obj->y;
+
+    if (x >= 2 && x < CANVAS_WIDTH - 2 && y >= 2 && y < CANVAS_HEIGHT - 2) {
+        canvas[y - 2][x] = c;
+        canvas[y - 1][x - 1] = c;
+        canvas[y - 1][x] = c;
+        canvas[y - 1][x + 1] = c;
+        canvas[y][x - 2] = c;
+        canvas[y][x - 1] = c;
+        canvas[y][x] = c;
+        canvas[y][x + 1] = c;
+        canvas[y][x + 2] = c;
+        canvas[y + 1][x - 1] = c;
+        canvas[y + 1][x] = c;
+        canvas[y + 1][x + 1] = c;
+        canvas[y + 2][x] = c;
+    }
+    imprimir_canvas();
+    my_mutex_unlock(&canvas_mutex);
+}
+
+
+void borrar_estrella(Objeto *obj) {
+    my_mutex_lock(&canvas_mutex);
+    int x = obj->x, y = obj->y;
+
+    if (x >= 2 && x < CANVAS_WIDTH - 2 && y >= 2 && y < CANVAS_HEIGHT - 2) {
+        canvas[y - 2][x] = '.';
+        canvas[y - 1][x - 1] = '.';
+        canvas[y - 1][x] = '.';
+        canvas[y - 1][x + 1] = '.';
+        canvas[y][x - 2] = '.';
+        canvas[y][x - 1] = '.';
+        canvas[y][x] = '.';
+        canvas[y][x + 1] = '.';
+        canvas[y][x + 2] = '.';
+        canvas[y + 1][x - 1] = '.';
+        canvas[y + 1][x] = '.';
+        canvas[y + 1][x + 1] = '.';
+        canvas[y + 2][x] = '.';
+    }
+    my_mutex_unlock(&canvas_mutex);
+}
+
+
+void animar_objeto(void *arg) {
+    Objeto *obj = (Objeto *)arg;
+
+    my_sleep(obj->tiempo_inicio);
+
+    for (int i = 0; i < obj->tiempo_final; i++) {
+        borrar_estrella(obj);
+        obj->x += obj->dx;
+        obj->y += obj->dy;
+        dibujar_estrella(obj);
+        obj->tiempo_actual++;
+        my_sleep(1);
+        my_thread_yield();
+    }
+
+    borrar_estrella(obj);
+
+    my_mutex_lock(&canvas_mutex);
+    if (obj->x >= 0 && obj->x < CANVAS_WIDTH && obj->y >= 0 && obj->y < CANVAS_HEIGHT) {
+        strcpy(&canvas[obj->y][obj->x], "BOOM");
+    }
+    imprimir_canvas();
+    my_mutex_unlock(&canvas_mutex);
 }
 
 int main() {
     my_mutex_init(&canvas_mutex);
     inicializar_canvas();
 
-    my_thread_t *hilo;
-    my_thread_create(&hilo, NULL, animar_estrella, NULL);
-    printf("Hilo creado con ID: %d\n", hilo->id);
+    Objeto objetos[9] = {
+        {0, 6, 1, 0, 1, 8, 0, 0},   // Round Robin
+        {0, 11, 1, 0, 1, 9, 0, 1},
+        {0, 16, 1, 0, 1, 10, 0, 2},
 
-    my_thread_start();  // <- Inicia ejecución
+        {0, 21, 1, 0, 1, 8, 0, 3},   // Lottery
+        {0, 26, 1, 0, 1, 9, 0, 4},
+        {0, 31, 1, 0, 1, 10, 0, 5},
 
-    my_mutex_destroy(&canvas_mutex);
+        {0, 36, 1, 0, 1, 5, 0, 6},  // Real-Time
+        {0, 41, 1, 0, 1, 6, 0, 7},
+        {0, 46, 1, 0, 1, 7, 0, 8}
+    };
+
+    my_thread_t *threads[9];
+
+    for (int i = 0; i < 3; i++)
+        my_thread_create(&threads[i], NULL, animar_objeto, &objetos[i], SCHED_RR, 0);
+
+    for (int i = 3; i < 6; i++)
+        my_thread_create(&threads[i], NULL, animar_objeto, &objetos[i], SCHED_LOTTERY, 5 + i);
+
+    for (int i = 6; i < 9; i++)
+        my_thread_create(&threads[i], NULL, animar_objeto, &objetos[i], SCHED_RT, objetos[i].tiempo_final);
+
+    my_thread_start();
+
     return 0;
 }
