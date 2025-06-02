@@ -13,7 +13,7 @@ Repositorio para el control de versiones del **Proyecto 1** del curso **Principi
 ## 🛠️ Descripción
 El proyecto MultiDisplay Animator consiste en un sistema distribuido para crear animaciones ASCII que se despliegan en múltiples monitores. Una biblioteca personalizada de hilos mypthreads con tres schedulers:
 
-        Round Robin: Turnos iguales+
+        Round Robin: Turnos iguales.
         
         Sorteo (Lottery): Sorteo con "tickets", entre más tickets, más probablidad. 
         
