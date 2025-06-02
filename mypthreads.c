@@ -7,18 +7,18 @@
 #include <sys/time.h>
 #include <time.h>
 
-#define MAX_THREADS 128
+#define MAX_THREADS 128 //Maximo número de hilos
 #define DEBUG_PRINT(fmt, ...) fprintf(stderr, fmt "\n", ##__VA_ARGS__)
 #define CRITICAL_TIME 100
 
 char mensaje_scheduler[100] = "Esperando hilos...";
 
-static my_thread_t *rr_queue = NULL;
-static my_thread_t *lottery_queue = NULL;
-static my_thread_t *rt_queue = NULL;
+static my_thread_t *rr_queue = NULL; //Cola para Round Robin
+static my_thread_t *lottery_queue = NULL; //Cola para Sorteo
+static my_thread_t *rt_queue = NULL; //Cola para Tiempo Real
 
-static my_thread_t *current_thread = NULL;
-static ucontext_t main_context;
+static my_thread_t *current_thread = NULL; //Hilo actualmente ejecutandose
+static ucontext_t main_context; 
 static int thread_id_counter = 0;
 
 int get_current_time(void) {
@@ -32,6 +32,7 @@ static void thread_wrapper(void (*start_routine)(void *), void *arg) {
     my_thread_end();
 }
 
+//Encola un hilo
 void enqueue_thread(my_thread_t **queue, my_thread_t *thread) {
     thread->next = NULL;
     if (!*queue) {
@@ -46,21 +47,21 @@ void enqueue_thread(my_thread_t **queue, my_thread_t *thread) {
 my_thread_t *dequeue_rr() {
     if (!rr_queue) return NULL;
     my_thread_t *t = rr_queue;
-    rr_queue = rr_queue->next;
+    rr_queue = rr_queue->next; //El siguiente en cola
     return t;
 }
 
 my_thread_t *dequeue_lottery() {
     if (!lottery_queue) return NULL;
 
-    int total_tickets = 0;
+    int total_tickets = 0; //Calcula el total del tiquete
     for (my_thread_t *t = lottery_queue; t != NULL; t = t->next) {
         total_tickets += t->tickets;
     }
 
     if (total_tickets == 0) return NULL;
 
-    int winning_ticket = rand() % total_tickets;
+    int winning_ticket = rand() % total_tickets; //Elige el tiquete ganador y lo ubica. 
     my_thread_t *prev = NULL;
     my_thread_t *curr = lottery_queue;
     while (curr) {
@@ -112,7 +113,7 @@ my_thread_t *scheduler_dispatch() {
         my_thread_t *prev = NULL;
         my_thread_t *curr = rt_queue;
 
-        // Buscar el hilo RT con deadline más urgente
+        // Buscar el hilo RT con deadline más URGENTE
         while (curr) {
             if (curr->deadline - current_time < CRITICAL_TIME) {
                 urgent_thread = curr;
@@ -173,6 +174,7 @@ my_thread_t *scheduler_dispatch() {
     return NULL;
 }
 
+//La creación del hilo.
 int my_thread_create(my_thread_t **thread, void *attr, void *(*start_routine)(void *), void *arg, scheduler_type_t scheduler, int extra) {
     if (thread_id_counter >= MAX_THREADS) return -1;
     *thread = (my_thread_t *)malloc(sizeof(my_thread_t));

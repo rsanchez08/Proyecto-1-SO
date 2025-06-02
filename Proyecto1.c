@@ -7,7 +7,7 @@
 #define CANVAS_HEIGHT 50
 
 char canvas[CANVAS_HEIGHT][CANVAS_WIDTH];
-my_mutex_t canvas_mutex;
+my_mutex_t canvas_mutex; //Mutex para asegurar que solo un hilo acceda al canvas a la vez. 
 
 typedef struct {
     int x, y;               // posición actual
@@ -21,14 +21,14 @@ typedef struct {
 void inicializar_canvas() {
     for (int i = 0; i < CANVAS_HEIGHT; i++) {
         for (int j = 0; j < CANVAS_WIDTH; j++) {
-            canvas[i][j] = '.';
+            canvas[i][j] = '.'; //Rellena el canvas con puntos que representa el espacio vacío 
         }
     }
     printf("Canvas inicializado\n");
 }
 
 void imprimir_canvas() {
-    system("clear");
+    system("clear"); //Limpia para que se vea la animación fluida. 
     for (int i = 0; i < CANVAS_HEIGHT; i++) {
         for (int j = 0; j < CANVAS_WIDTH; j++) {
             putchar(canvas[i][j]);
@@ -42,8 +42,8 @@ void imprimir_canvas() {
 
 
 void dibujar_estrella(Objeto *obj) {
-    char c = '0' + obj->id;
-    my_mutex_lock(&canvas_mutex);
+    char c = '0' + obj->id; //Caracter que repreetna el objeto. 
+    my_mutex_lock(&canvas_mutex); //Bloquea acceso exclusivo al canvas. 
     int x = obj->x, y = obj->y;
 
     if (x >= 2 && x < CANVAS_WIDTH - 2 && y >= 2 && y < CANVAS_HEIGHT - 2) {
@@ -92,19 +92,19 @@ void borrar_estrella(Objeto *obj) {
 void animar_objeto(void *arg) {
     Objeto *obj = (Objeto *)arg;
 
-    my_sleep(obj->tiempo_inicio);
+    my_sleep(obj->tiempo_inicio); // Espera el tiempo inicial antes de comenzar la animación
 
     for (int i = 0; i < obj->tiempo_final; i++) {
-        borrar_estrella(obj);
-        obj->x += obj->dx;
+        borrar_estrella(obj); // Borra la estrella en la posición anterior
+        obj->x += obj->dx; // Actualiza la posición
         obj->y += obj->dy;
-        dibujar_estrella(obj);
+        dibujar_estrella(obj); // Dibuja la estrella en la nueva posición
         obj->tiempo_actual++;
-        my_sleep(1);
-        my_thread_yield();
+        my_sleep(1); // Espera 1 segundo entre movimientos
+        my_thread_yield(); // Cede el control al scheduler (permite que otros hilos avancen)
     }
 
-    borrar_estrella(obj);
+    borrar_estrella(obj); // Borra la estrella al finalizar su animación
 
     my_mutex_lock(&canvas_mutex);
     if (obj->x >= 0 && obj->x < CANVAS_WIDTH && obj->y >= 0 && obj->y < CANVAS_HEIGHT) {
@@ -143,7 +143,7 @@ int main() {
     for (int i = 6; i < 9; i++)
         my_thread_create(&threads[i], NULL, animar_objeto, &objetos[i], SCHED_RT, objetos[i].tiempo_final);
 
-    my_thread_start();
+    my_thread_start(); // Inicia la ejecución de todos los hilos
 
     return 0;
 }
