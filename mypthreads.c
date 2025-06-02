@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200112L
 #include "mypthreads.h"
 #include <stdlib.h>
 #include <stdio.h>
@@ -8,6 +9,7 @@
 
 #define MAX_THREADS 128
 #define DEBUG_PRINT(fmt, ...) fprintf(stderr, fmt "\n", ##__VA_ARGS__)
+#define CRITICAL_TIME 100
 
 char mensaje_scheduler[100] = "Esperando hilos...";
 
@@ -18,6 +20,12 @@ static my_thread_t *rt_queue = NULL;
 static my_thread_t *current_thread = NULL;
 static ucontext_t main_context;
 static int thread_id_counter = 0;
+
+int get_current_time(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (ts.tv_sec * 1000) + (ts.tv_nsec / 1000000);
+}
 
 static void thread_wrapper(void (*start_routine)(void *), void *arg) {
     start_routine(arg);
@@ -97,26 +105,78 @@ my_thread_t *dequeue_rt() {
 }
 
 my_thread_t *scheduler_dispatch() {
+    // Verificar hilos RT con deadlines críticos (mayor prioridad)
+    if (rt_queue) {
+        int current_time = get_current_time(); 
+        my_thread_t *urgent_thread = NULL;
+        my_thread_t *prev = NULL;
+        my_thread_t *curr = rt_queue;
+
+        // Buscar el hilo RT con deadline más urgente
+        while (curr) {
+            if (curr->deadline - current_time < CRITICAL_TIME) {
+                urgent_thread = curr;
+                // Sacarlo de la cola RT
+                if (prev) {
+                    prev->next = curr->next;
+                } else {
+                    rt_queue = curr->next;
+                }
+                break;
+            }
+            prev = curr;
+            curr = curr->next;
+        }
+
+        if (urgent_thread) {
+            // Reencolar el hilo actual (si existe y está RUNNING)
+            if (current_thread && current_thread->state == RUNNING) {
+                current_thread->state = READY;
+                // Reencolar según su scheduler:
+                switch (current_thread->scheduler) {
+                    case SCHED_RR:
+                        enqueue_thread(&rr_queue, current_thread);
+                        break;
+                    case SCHED_LOTTERY:
+                        enqueue_thread(&lottery_queue, current_thread);
+                        break;
+                    case SCHED_RT:
+                        enqueue_thread(&rt_queue, current_thread);
+                        break;
+                }
+            }
+            snprintf(mensaje_scheduler, sizeof(mensaje_scheduler),
+                    "[Scheduler: Tiempo Real URGENTE] Hilo ID: %d (Deadline: %dms)",
+                    urgent_thread->id, urgent_thread->deadline);
+            return urgent_thread;
+        }
+    }
+
     if (rt_queue) {
         my_thread_t *t = dequeue_rt();
-        snprintf(mensaje_scheduler, sizeof(mensaje_scheduler), "[Scheduler: Tiempo Reeal] Ejecutando hilo ID: %d", t->id);
+        snprintf(mensaje_scheduler, sizeof(mensaje_scheduler),
+                "[Scheduler: Tiempo Real] Hilo ID: %d", t->id);
         return t;
     }
     if (lottery_queue) {
         my_thread_t *t = dequeue_lottery();
-        snprintf(mensaje_scheduler, sizeof(mensaje_scheduler), "[Scheduler: Sorteo] Ejecutando hilo ID: %d", t->id);
+        snprintf(mensaje_scheduler, sizeof(mensaje_scheduler),
+                "[Scheduler: Sorteo] Hilo ID: %d", t->id);
         return t;
     }
     if (rr_queue) {
         my_thread_t *t = dequeue_rr();
-        snprintf(mensaje_scheduler, sizeof(mensaje_scheduler), "[Scheduler: Round Robin] Ejecutando hilo ID: %d", t->id);
+        snprintf(mensaje_scheduler, sizeof(mensaje_scheduler),
+                "[Scheduler: Round Robin] Hilo ID: %d", t->id);
         return t;
     }
     return NULL;
 }
 
 int my_thread_create(my_thread_t **thread, void *attr, void *(*start_routine)(void *), void *arg, scheduler_type_t scheduler, int extra) {
+    if (thread_id_counter >= MAX_THREADS) return -1;
     *thread = (my_thread_t *)malloc(sizeof(my_thread_t));
+    if (!*thread) return -1;
     (*thread)->id = thread_id_counter++;
     (*thread)->state = READY;
     (*thread)->retval = NULL;
@@ -130,7 +190,6 @@ int my_thread_create(my_thread_t **thread, void *attr, void *(*start_routine)(vo
     (*thread)->context.uc_stack.ss_flags = 0;
     (*thread)->context.uc_link = &main_context;
     makecontext(&(*thread)->context, (void (*)())thread_wrapper, 2, start_routine, arg);
-
     if (scheduler == SCHED_RR)
         enqueue_thread(&rr_queue, *thread);
     else if (scheduler == SCHED_LOTTERY)
@@ -151,8 +210,8 @@ void my_thread_start() {
     }
 }
 
-void my_thread_yield() {
-    if (!current_thread || current_thread->state != RUNNING) return;
+int my_thread_yield() {
+    if (!current_thread || current_thread->state != RUNNING) return -1;
     current_thread->state = READY;
 
     if (current_thread->scheduler == SCHED_RR)
@@ -163,16 +222,21 @@ void my_thread_yield() {
         enqueue_thread(&rt_queue, current_thread);
 
     my_thread_t *next = scheduler_dispatch();
-    if (!next) return;
+    if (!next) {
+        current_thread = NULL;
+        return -1;
+    }
     my_thread_t *prev = current_thread;
     current_thread = next;
     current_thread->state = RUNNING;
     swapcontext(&prev->context, &current_thread->context);
+    return 0;
 }
 
-void my_thread_end() {
+int my_thread_end() {
     current_thread->state = FINISHED;
     free(current_thread->context.uc_stack.ss_sp);
+    free(current_thread);
     my_thread_t *next = scheduler_dispatch();
     if (next) {
         current_thread = next;
@@ -181,47 +245,62 @@ void my_thread_end() {
     } else {
         setcontext(&main_context);
     }
+    return 0;
 }
 
 int my_thread_join(my_thread_t *thread) {
     while (thread->state != FINISHED) {
         my_thread_yield();
     }
+    free(thread);
     return 0;
 }
 
-void my_mutex_init(my_mutex_t *mutex) {
-    mutex->locked = 0;
-    mutex->owner = NULL;
+int my_thread_chsched(my_thread_t *thread, scheduler_type_t new_scheduler, int extra_param) {
+    if (thread->state == FINISHED) return -1;
+    thread->scheduler = new_scheduler;
+    if (new_scheduler == SCHED_LOTTERY) thread->tickets = extra_param;
+    else if (new_scheduler == SCHED_RT) thread->deadline = extra_param;
+    return 0;
 }
 
-void my_mutex_destroy(my_mutex_t *mutex) {
+int my_mutex_init(my_mutex_t *mutex) {
     mutex->locked = 0;
     mutex->owner = NULL;
+    return 0;
 }
 
-void my_mutex_lock(my_mutex_t *mutex) {
+int my_mutex_destroy(my_mutex_t *mutex) {
+    mutex->locked = 0;
+    mutex->owner = NULL;
+    return 0;
+}
+
+int my_mutex_lock(my_mutex_t *mutex) {
     while (__sync_lock_test_and_set(&mutex->locked, 1)) {
         my_thread_yield();
     }
     mutex->owner = current_thread;
+    return 0;
 }
 
-void my_mutex_unlock(my_mutex_t *mutex) {
+int my_mutex_unlock(my_mutex_t *mutex) {
     if (mutex->owner == current_thread) {
         mutex->locked = 0;
         mutex->owner = NULL;
     }
+    return 0;
 }
 
-void my_mutex_trylock(my_mutex_t *mutex) {
+int my_mutex_trylock(my_mutex_t *mutex) {
     if (__sync_lock_test_and_set(&mutex->locked, 1) == 0) {
         mutex->owner = current_thread;
-    } else {
-        my_thread_yield();
+        return 0;
     }
+    return -1;
 }
 
 void my_sleep(int seconds) {
     usleep(seconds * 1000000);
 }
+
